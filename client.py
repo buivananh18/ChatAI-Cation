@@ -105,7 +105,9 @@ async def send_messages(websocket):
             print("❌ Loại chat không hỗ trợ. Dùng 1:1, 1:N, N:N, voice, video.")
 
 async def main():
-    uri = os.environ.get("CHAT_SERVER", "ws://localhost:8765/ws")
+    # Đổi từ ws://localhost:8765/ws sang wss:// của Render, bỏ đuôi /ws đi bạn nhé
+    uri = os.environ.get("CHAT_SERVER", "wss://chatai-cation.onrender.com")
+    
     async with websockets.connect(uri) as websocket:
         await asyncio.gather(receive_messages(websocket), send_messages(websocket))
 
