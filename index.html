@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ChatAI-Cation</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; padding: 0; background: #f7f9fc; color: #222; }
+        header { background: #3a86ff; color: white; padding: 18px 24px; }
+        main { display: grid; grid-template-columns: 1fr 320px; gap: 18px; padding: 18px; }
+        .card { background: white; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.08); padding: 18px; }
+        .card h2 { margin-top: 0; }
+        textarea, input, select, button { width: 100%; border-radius: 8px; border: 1px solid #d0d7de; padding: 10px; font-size: 14px; }
+        button { background: #3a86ff; color: white; border: none; cursor: pointer; }
+        button:disabled { background: #94c6ff; cursor: not-allowed; }
+        #chatHistory { height: 380px; overflow-y: auto; background: #efefff; padding: 12px; border-radius: 10px; }
+        .message { margin-bottom: 14px; }
+        .message .meta { font-size: 12px; color: #555; margin-bottom: 4px; }
+        .system { color: #0f7a6f; }
+        .online-list { margin-top: 12px; font-size: 14px; }
+        .small { font-size: 13px; color: #555; }
+        .instructions { margin-top: 12px; font-size: 14px; line-height: 1.6; }
+    </style>
+</head>
+<body>
+<header>
+    <h1>ChatAI-Cation</h1>
+    <p>Giao diện web cho chat 1:1, 1:N và N:N trên Render.</p>
+</header>
+<main>
+    <section class="card">
+        <h2>Kết nối</h2>
+        <label>Username</label>
+        <input id="usernameInput" placeholder="Nhập username..." />
+        <button id="connectBtn">Kết nối</button>
+        <p class="small">Kết nối tới WebSocket: <code>/ws</code></p>
+        <div id="status" class="small"></div>
+        <div class="online-list">
+            <strong>Đang online:</strong>
+            <div id="onlineUsers">(chưa có)</div>
+        </div>
+        <div class="instructions">
+            <strong>Cú pháp gửi:</strong>
+            <ul>
+                <li><code>1:1 @username : Nội dung</code></li>
+                <li><code>1:N #channel : Nội dung</code> (chỉ Admin)</li>
+                <li><code>N:N #group : Nội dung</code></li>
+                <li><code>subscribe #channel</code></li>
+                <li><code>join #group</code></li>
+                <li><code>list</code></li>
+                <li><code>help</code></li>
+            </ul>
+        </div>
+    </section>
+
+    <section class="card">
+        <h2>Chat</h2>
+        <div id="chatHistory"></div>
+        <label>Lệnh hoặc tin nhắn</label>
+        <input id="messageInput" placeholder="1:1 @them : Xin chào..." />
+        <button id="sendBtn" disabled>Gửi</button>
+    </section>
+</main>
+<script>
+    const connectBtn = document.getElementById('connectBtn');
+    const sendBtn = document.getElementById('sendBtn');
+    const usernameInput = document.getElementById('usernameInput');
+    const messageInput = document.getElementById('messageInput');
+    const statusEl = document.getElementById('status');
+    const chatHistory = document.getElementById('chatHistory');
+    const onlineUsers = document.getElementById('onlineUsers');
+
+    let socket;
+    let connected = false;
+
+    function addMessage(text, type='normal') {
+        const div = document.createElement('div');
+        div.className = 'message';
+        if (type === 'system') div.classList.add('system');
+        div.innerHTML = `<div class="meta">${new Date().toLocaleTimeString()}</div><div>${text}</div>`;
+        chatHistory.appendChild(div);
+        chatHistory.scrollTop = chatHistory.scrollHeight;
+    }
+
+    function updateStatus(text) {
+        statusEl.textContent = text;
+    }
+
+    function handleIncoming(data) {
+        if (data.system) {
+            addMessage(data.system, 'system');
+            if (data.online) {
+                onlineUsers.textContent = data.online.join(', ') || '(chưa có)';
+            }
+            return;
+        }
+        addMessage(`<strong>${data.from}</strong>: ${data.message}`);
+    }
+
+    connectBtn.onclick = async () => {
+        const username = usernameInput.value.trim();
+        if (!username) {
+            updateStatus('Nhập username trước khi kết nối');
+            return;
+        }
+        if (connected) return;
+
+        const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
+        const url = `${protocol}://${location.host}/ws`;
+        socket = new WebSocket(url);
+
+        socket.addEventListener('open', () => {
+            updateStatus('Đã kết nối, gửi username...');
+            socket.send(username);
+        });
+
+        socket.addEventListener('message', event => {
+            try {
+                const data = JSON.parse(event.data);
+                handleIncoming(data);
+            } catch (err) {
+                addMessage(event.data, 'system');
+            }
+        });
+
+        socket.addEventListener('close', () => {
+            updateStatus('Ngắt kết nối');
+            connected = false;
+            sendBtn.disabled = true;
+        });
+
+        socket.addEventListener('error', () => {
+            updateStatus('Lỗi kết nối WebSocket');
+        });
+
+        connected = true;
+        sendBtn.disabled = false;
+        updateStatus('Đang chờ phản hồi server...');
+    };
+
+    sendBtn.onclick = () => {
+        if (!connected || socket.readyState !== WebSocket.OPEN) {
+            updateStatus('Chưa kết nối hoặc kết nối đã đóng');
+            return;
+        }
+
+        const text = messageInput.value.trim();
+        if (!text) return;
+
+        if (text.toLowerCase() === 'help' || text.toLowerCase() === 'list') {
+            socket.send(JSON.stringify({ action: text.toLowerCase() }));
+            messageInput.value = '';
+            return;
+        }
+
+        if (text.toLowerCase().startsWith('subscribe ') || text.toLowerCase().startsWith('join ')) {
+            const [cmd, target] = text.split(' ');
+            const actionType = cmd.toLowerCase() === 'subscribe' ? 'channel' : 'group';
+            socket.send(JSON.stringify({ action: 'join', chat: actionType, target: target.replace('#', '') }));
+            messageInput.value = '';
+            return;
+        }
+
+        const [header, ...messageParts] = text.split(' :');
+        if (!messageParts.length) {
+            updateStatus('Sai cú pháp. Dùng "1:1 @username : message" hoặc tương tự');
+            return;
+        }
+
+        const message = messageParts.join(' :').trim();
+        const headerParts = header.trim().split(' ');
+        const type = headerParts[0];
+        const target = headerParts[1];
+
+        socket.send(JSON.stringify({ action: 'send', type, target, message }));
+        messageInput.value = '';
+    };
+</script>
+</body>
+</html>
