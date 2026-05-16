@@ -1,269 +1,40 @@
-import asyncio
-import json
 import os
-from pathlib import Path
-import psycopg
+import asyncio
 import websockets
+from dotenv import load_dotenv
 
-DB_URL = os.environ.get("DATABASE_URL")
+# Tải cấu hình từ file .env
+load_dotenv()
 
-clients = {}  # {username: websocket}
+# Biến lưu trữ các client đang kết nối (Dùng cho logic chat của bạn)
+# Bạn có thể giữ nguyên hoặc điều chỉnh tùy thuộc vào cấu trúc logic chat hiện tại
+connected_clients = set()
 
-channels = {
-    "thoi_su": {"admin": "admin1", "members": set()},
-    "tin_tuc": {"admin": "admin1", "members": set()}
-}
-groups = {
-    "gia_dinh": set(),
-    "cong_viec": set(),
-    "phong_chat": set()
-}
-
-HELP_TEXT = (
-    "HỆ THỐNG: Hướng dẫn chat:\n"
-    "• Chat 1:1 -> 1:1 @ten_nguoi_nhan : Noi dung\n"
-    "• Chat 1:N -> 1:N #ten_kenh : Noi dung (Chỉ Admin có quyền nhắn)\n"
-    "• Chat N:N -> N:N #ten_nhom : Noi dung\n"
-    "• Tham gia kênh -> subscribe #ten_kenh\n"
-    "• Tham gia nhóm -> join #ten_nhom\n"
-    "• Kiểm tra danh sách -> list\n"
-    "• Voice placeholder -> voice @ten_nguoi_nhan : file.wav\n"
-    "• Video placeholder -> video #ten_nhom : video_link"
-)
-
-BASE_DIR = Path(__file__).parent
-
-
-def channel_summary():
-    lines = []
-    for name, info in channels.items():
-        members = ", ".join(sorted(info["members"])) or "(chưa có thành viên)"
-        lines.append(f"# {name} (Admin: {info['admin']}): {members}")
-    return "\n".join(lines)
-
-
-def group_summary():
-    lines = []
-    for name, members in groups.items():
-        member_list = ", ".join(sorted(members)) or "(chưa có thành viên)"
-        lines.append(f"# {name}: {member_list}")
-    return "\n".join(lines)
-
-
-async def send_system(ws, message, extra=None):
-    payload = {"system": message}
-    if extra:
-        payload.update(extra)
-    await ws.send_str(json.dumps(payload))
-
-
-async def broadcast(payload, recipients, exclude_username=None):
-    if isinstance(payload, dict):
-        payload = json.dumps(payload)
-    for username in recipients:
-        if username == exclude_username:
-            continue
-        ws = clients.get(username)
-        if ws:
-            await ws.send_str(payload)
-
-
-async def broadcast_user_list():
-    payload = {
-        "system": "Cập nhật danh sách người dùng online",
-        "online": sorted(clients.keys())
-    }
-    for ws in clients.values():
-        await ws.send_str(json.dumps(payload))
-
-
-def remove_user_from_rooms(username):
-    for channel in channels.values():
-        channel["members"].discard(username)
-    for members in groups.values():
-        members.discard(username)
-
-
-async def websocket_handler(request):
-    ws = web.WebSocketResponse()
-    await ws.prepare(request)
-
-    username = None
+# --- HÀM XỬ LÝ LOGIC CHAT (WEBSOCKET HANDLER) ---
+async def handle_client(websocket):
+    """
+    Hàm xử lý kết nối từ Client. 
+    Hãy đảm bảo logic nhận/gửi tin nhắn này khớp với thiết kế của bạn.
+    """
+    print(f"🔌 Có kết nối mới từ: {websocket.remote_address}")
+    connected_clients.add(websocket)
     try:
-        await send_system(ws, "Vui lòng nhập username của bạn:")
-
-        async for msg in ws:
-            if msg.type != web.WSMsgType.TEXT:
-                continue
-
-            content = msg.data.strip()
-            if username is None:
-                if not content or content in clients:
-                    await send_system(ws, "Username không hợp lệ hoặc đã tồn tại. Đóng kết nối!")
-                    await ws.close()
-                    break
-
-                username = content
-                clients[username] = ws
-                for channel in channels.values():
-                    channel["members"].add(username)
-                for group_members in groups.values():
-                    group_members.add(username)
-
-                await broadcast_user_list()
-                await broadcast({"system": f"Người dùng '{username}' vừa đăng nhập."}, clients.keys(), exclude_username=username)
-                print(f"[+] {username} đã kết nối.")
-                welcome = (
-                    f"Chào mừng {username}! Bạn đã kết nối thành công.\n"
-                    "Nhập 'help' để xem hướng dẫn."
-                )
-                await send_system(ws, welcome)
-                await send_system(ws, HELP_TEXT)
-                continue
-
-            try:
-                data = json.loads(content)
-            except json.JSONDecodeError:
-                await send_system(ws, "Dữ liệu gửi lên phải là JSON hợp lệ.")
-                continue
-
-            action = data.get("action", "send")
-            if action == "list":
-                content_text = (
-                    "Danh sách kênh và nhóm hiện có:\n"
-                    f"Kênh:\n{channel_summary()}\n"
-                    f"Nhóm:\n{group_summary()}\n"
-                    f"Người đang online: {', '.join(sorted(clients.keys()))}"
-                )
-                await send_system(ws, content_text)
-                continue
-
-            if action == "help":
-                await send_system(ws, HELP_TEXT)
-                continue
-
-            if action == "join":
-                chat_type = data.get("chat")
-                target = data.get("target")
-                if chat_type == "channel":
-                    if target not in channels:
-                        await send_system(ws, f"Kênh '{target}' không tồn tại.")
-                        continue
-                    channels[target]["members"].add(username)
-                    await send_system(ws, f"Bạn đã đăng ký nhận tin kênh '{target}'.")
-                    continue
-                if chat_type == "group":
-                    groups.setdefault(target, set()).add(username)
-                    await send_system(ws, f"Bạn đã tham gia nhóm '{target}'.")
-                    continue
-                await send_system(ws, "Lệnh join không hợp lệ. Dùng 'subscribe #kenh' hoặc 'join #nhom'.")
-                continue
-
-            if action == "send":
-                chat_type = data.get("type")
-                target = data.get("target")
-                msg_content = data.get("message", "").strip()
-                if not chat_type or not target or not msg_content:
-                    await send_system(ws, "Thiếu thông tin gửi tin. Vui lòng kiểm tra lại cú pháp.")
-                    continue
-
-                if chat_type == "1:1":
-                    if target not in clients:
-                        await send_system(ws, f"Người dùng '{target}' hiện không online.")
-                        continue
-                    payload = {"from": username, "type": "1:1", "message": msg_content}
-                    await clients[target].send_str(json.dumps(payload))
-                    await send_system(ws, f"Đã gửi tin nhắn tới '{target}'.")
-                    continue
-
-                if chat_type == "1:N":
-                    if target not in channels:
-                        await send_system(ws, f"Kênh '{target}' không tồn tại.")
-                        continue
-                    if channels[target]["admin"] != username:
-                        await send_system(ws, f"Bạn không phải Admin của kênh '{target}'.")
-                        continue
-                    recipients = channels[target]["members"].copy()
-                    if not recipients:
-                        await send_system(ws, f"Kênh '{target}' chưa có thành viên nào để nhận tin.")
-                        continue
-                    payload = {"from": f"📢 [CHANNEL {target}] {username}", "type": "1:N", "message": msg_content}
-                    await broadcast(payload, recipients, exclude_username=username)
-                    await send_system(ws, f"Đã gửi tin nhắn lên kênh '{target}'.")
-                    continue
-
-                if chat_type == "N:N":
-                    if target not in groups or username not in groups[target]:
-                        await send_system(ws, f"Bạn chưa tham gia nhóm '{target}'. Vui lòng join trước.")
-                        continue
-                    recipients = groups[target].copy()
-                    payload = {"from": f"👥 [GROUP {target}] {username}", "type": "N:N", "message": msg_content}
-                    await broadcast(payload, recipients, exclude_username=username)
-                    await send_system(ws, f"Đã gửi tin nhắn tới nhóm '{target}'.")
-                    continue
-
-                if chat_type in {"voice", "video"}:
-                    nested_type = "VOICE" if chat_type == "voice" else "VIDEO"
-                    if target.startswith("@"):
-                        recipient_name = target[1:]
-                        if recipient_name not in clients:
-                            await send_system(ws, f"Người dùng '{recipient_name}' hiện không online.")
-                            continue
-                        payload = {"from": username, "type": nested_type, "message": msg_content}
-                        await clients[recipient_name].send_str(json.dumps(payload))
-                        await send_system(ws, f"Đã gửi {chat_type} placeholder tới '{recipient_name}'.")
-                        continue
-                    if target.startswith("#"):
-                        room_name = target[1:]
-                        if room_name not in groups or username not in groups[room_name]:
-                            await send_system(ws, f"Bạn chưa tham gia nhóm '{room_name}'.")
-                            continue
-                        recipients = groups[room_name].copy()
-                        payload = {"from": f"🎥 [{nested_type} {room_name}] {username}", "type": nested_type, "message": msg_content}
-                        await broadcast(payload, recipients, exclude_username=username)
-                        await send_system(ws, f"Đã gửi {chat_type} placeholder tới nhóm '{room_name}'.")
-                        continue
-                    await send_system(ws, "Đích voice/video phải là @username hoặc #group.")
-                    continue
-
-                await send_system(ws, "Loại chat không hợp lệ. Hãy dùng 1:1, 1:N, N:N, voice, video.")
-                continue
-
-            await send_system(ws, "Hành động không được hỗ trợ.")
-
-    except Exception:
-        pass
+        async for message in websocket:
+            print(f"📩 Nhận tin nhắn: {message}")
+            
+            # Logic mẫu: Gửi lại tin nhắn cho tất cả mọi người (Broadcast)
+            # Bạn có thể thêm logic lưu tin nhắn vào Database tại đây nếu muốn
+            if connected_clients:
+                await asyncio.gather(*[client.send(message) for client in connected_clients])
+                
+    except websockets.exceptions.ConnectionClosed as e:
+        print(f"🛑 Một client đã ngắt kết nối: {websocket.remote_address}")
     finally:
-        if username:
-            remove_user_from_rooms(username)
-            if username in clients:
-                del clients[username]
-            await broadcast_user_list()
-            await broadcast({"system": f"Người dùng '{username}' đã ngắt kết nối."}, clients.keys())
-            print(f"[-] {username} đã ngắt kết nối.")
+        connected_clients.remove(websocket)
 
-    return ws
-
-
-async def index_handler(request):
-    return web.FileResponse(BASE_DIR / 'index.html')
-
-
-async def health_handler(request):
-    return web.json_response({'status': 'ok'})
-
-
-def create_app():
-    app = web.Application()
-    app.router.add_get('/', index_handler)
-    app.router.add_get('/ws', websocket_handler)
-    app.router.add_get('/health', health_handler)
-    app.router.add_static('/static/', path=BASE_DIR, show_index=False)
-    return app
-
-
-# Hàm kết nối và khởi tạo bảng trên Database PostgreSQL (Con voi)
+# --- HÀM KHỞI TẠO VÀ ĐẢM BẢO CẤU TRÚC DATABASE ---
 def init_database():
+    # Lấy chuỗi kết nối từ biến môi trường (.env ở local hoặc Environment trên Render)
     DB_URL = os.environ.get("DATABASE_URL")
     
     if not DB_URL:
@@ -273,21 +44,19 @@ def init_database():
     try:
         import psycopg
         
-        # Đảm bảo chuỗi kết nối có tham số sslmode=require ở cuối
-        # Nếu chưa có, chúng ta tự động nối thêm vào code cho chắc chắn
-        if "sslmode" not in DB_URL:
-            if "?" in DB_URL:
-                conn_str = f"{DB_URL}&sslmode=require"
-            else:
-                conn_str = f"{DB_URL}?sslmode=require"
+        # Tự động tối ưu hóa SSL dựa trên môi trường chạy
+        if "RENDER" in os.environ:
+            # Nếu đang chạy TRÊN RENDER: Ép dùng chế độ require bảo mật chuẩn của Linux
+            print("🌐 [Database] Phát hiện môi trường Render. Đang kết nối bảo mật nội bộ...")
+            conn = psycopg.connect(DB_URL, sslmode="require")
         else:
-            conn_str = DB_URL
-
-        # Kết nối bằng chuỗi hoàn chỉnh
-        conn = psycopg.connect(conn_str)
+            # Nếu đang chạy ở MÁY LOCAL: Dùng chuỗi từ file .env của bạn (đã có ?sslmode=no-verify)
+            print("💻 [Database] Phát hiện môi trường Local. Đang kết nối tới Render...")
+            conn = psycopg.connect(DB_URL)
+            
         cursor = conn.cursor()
         
-        # (Giữ nguyên đoạn code cursor.execute tạo bảng phía dưới của bạn...)
+        # Tự động tạo bảng lưu tin nhắn nếu chưa tồn tại
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS chat_messages (
                 id SERIAL PRIMARY KEY,
@@ -298,27 +67,29 @@ def init_database():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
+        
         conn.commit()
         cursor.close()
         conn.close()
-        print("⚡ [Database] Kết nối thành công tới Render và đảm bảo cấu trúc bảng!")
+        print("⚡ [Database] Kết nối thành công và cấu trúc bảng đã sẵn sàng!")
     except Exception as e:
         print(f"❌ [Database] Lỗi kết nối hoặc khởi tạo dữ liệu: {e}")
 
+# --- HÀM KHỞI CHẠY CHÍNH ---
 async def main():
-    init_database()  # Gọi hàm ở trên (Bây giờ Python đã hiểu nó là gì)
+    # 1. Chạy hàm kiểm tra và khởi tạo database trước
+    init_database()
     
+    # 2. Lấy PORT từ hệ thống (Render tự cấp cổng ngẫu nhiên, local mặc định dùng 8765)
     port = int(os.environ.get("PORT", 8765))
-    app = create_app()
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    await site.start()
-    print(f"🚀 Server Chat đang chạy an toàn tại cổng {port}...")
-    await asyncio.Future()
+    
+    # 3. Kích hoạt Websocket Server chuẩn, lắng nghe ở địa chỉ '0.0.0.0' để mở cổng ra Internet
+    async with websockets.serve(handle_client, "0.0.0.0", port):
+        print(f"🚀 Server Chat đang chạy an toàn tại cổng {port}...")
+        await asyncio.Future()  # Giữ cho server luôn chạy liên tục không bị dừng
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\n🛑 Server đã dừng.")
+        print("\n🛑 Server đã chủ động dừng.")
