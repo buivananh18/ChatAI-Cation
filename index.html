@@ -10,16 +10,17 @@
         main { display: grid; grid-template-columns: 1fr 320px; gap: 18px; padding: 18px; }
         .card { background: white; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.08); padding: 18px; }
         .card h2 { margin-top: 0; }
-        textarea, input, select, button { width: 100%; border-radius: 8px; border: 1px solid #d0d7de; padding: 10px; font-size: 14px; }
-        button { background: #3a86ff; color: white; border: none; cursor: pointer; }
+        textarea, input, select, button { width: 100%; border-radius: 8px; border: 1px solid #d0d7de; padding: 10px; font-size: 14px; box-sizing: border-box; }
+        button { background: #3a86ff; color: white; border: none; cursor: pointer; margin-top: 8px; font-weight: bold; }
         button:disabled { background: #94c6ff; cursor: not-allowed; }
-        #chatHistory { height: 380px; overflow-y: auto; background: #efefff; padding: 12px; border-radius: 10px; }
-        .message { margin-bottom: 14px; }
-        .message .meta { font-size: 12px; color: #555; margin-bottom: 4px; }
-        .system { color: #0f7a6f; }
+        #chatHistory { height: 380px; overflow-y: auto; background: #efefff; padding: 12px; border-radius: 10px; border: 1px solid #d0d7de; }
+        .message { margin-bottom: 14px; padding: 6px 10px; background: white; border-radius: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.04); }
+        .message .meta { font-size: 11px; color: #777; margin-bottom: 4px; }
+        .system { color: #0f7a6f; background: #e6f4f2; font-style: italic; }
         .online-list { margin-top: 12px; font-size: 14px; }
-        .small { font-size: 13px; color: #555; }
+        .small { font-size: 13px; color: #555; margin-top: 4px; }
         .instructions { margin-top: 12px; font-size: 14px; line-height: 1.6; }
+        .instructions ul { padding-left: 20px; margin: 4px 0; }
     </style>
 </head>
 <body>
@@ -30,17 +31,17 @@
 <main>
     <section class="card">
         <h2>Kết nối</h2>
-        <label>Username</label>
+        <label for="usernameInput">Username</label>
         <input id="usernameInput" placeholder="Nhập username..." />
         <button id="connectBtn">Kết nối</button>
-        <p class="small">Kết nối tới WebSocket: <code>/ws</code></p>
-        <div id="status" class="small"></div>
+        <p class="small">Kết nối tới địa chỉ Render thực tế</p>
+        <div id="status" class="small" style="color: #3a86ff; font-weight: bold;"></div>
         <div class="online-list">
             <strong>Đang online:</strong>
             <div id="onlineUsers">(chưa có)</div>
         </div>
         <div class="instructions">
-            <strong>Cú pháp gửi:</strong>
+            <strong>Cú pháp gửi trực tiếp (như terminal):</strong>
             <ul>
                 <li><code>1:1 @username : Nội dung</code></li>
                 <li><code>1:N #channel : Nội dung</code> (chỉ Admin)</li>
@@ -56,8 +57,8 @@
     <section class="card">
         <h2>Chat</h2>
         <div id="chatHistory"></div>
-        <label>Lệnh hoặc tin nhắn</label>
-        <input id="messageInput" placeholder="1:1 @them : Xin chào..." />
+        <label for="messageInput" style="display:block; margin-top:12px;">Lệnh hoặc tin nhắn</label>
+        <input id="messageInput" placeholder="1:1 @them : Xin chào..." onkeypress="handleKeyPress(event)" />
         <button id="sendBtn" disabled>Gửi</button>
     </section>
 </main>
@@ -73,6 +74,9 @@
     let socket;
     let connected = false;
 
+    // ĐỊA CHỈ SERVER RENDER ĐÃ ĐƯỢC ĐỊNH NGHĨA CỐ ĐỊNH
+    const SERVER_URL = "wss://chatai-cation.onrender.com";
+
     function addMessage(text, type='normal') {
         const div = document.createElement('div');
         div.className = 'message';
@@ -86,18 +90,13 @@
         statusEl.textContent = text;
     }
 
-    function handleIncoming(data) {
-        if (data.system) {
-            addMessage(data.system, 'system');
-            if (data.online) {
-                onlineUsers.textContent = data.online.join(', ') || '(chưa có)';
-            }
-            return;
+    function handleKeyPress(event) {
+        if (event.key === "Enter" && !sendBtn.disabled) {
+            sendBtn.click();
         }
-        addMessage(`<strong>${data.from}</strong>: ${data.message}`);
     }
 
-    connectBtn.onclick = async () => {
+    connectBtn.onclick = () => {
         const username = usernameInput.value.trim();
         if (!username) {
             updateStatus('Nhập username trước khi kết nối');
@@ -105,37 +104,49 @@
         }
         if (connected) return;
 
-        const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
-        const url = `${protocol}://${location.host}/ws`;
-        socket = new WebSocket(url);
+        // Kết nối thẳng tới Render sử dụng biến SERVER_URL cố định
+        socket = new WebSocket(SERVER_URL);
 
         socket.addEventListener('open', () => {
-            updateStatus('Đã kết nối, gửi username...');
+            updateStatus('Đã kết nối! Đang gửi username đăng nhập...');
+            // Gửi username dạng chuỗi thuần giống y như lúc bạn gõ ở Terminal
             socket.send(username);
+            
+            connected = true;
+            sendBtn.disabled = false;
+            connectBtn.disabled = true;
+            usernameInput.disabled = true;
         });
 
         socket.addEventListener('message', event => {
+            // Server trả về chuỗi text thuần hay JSON, hàm này sẽ xử lý mượt mà cả hai
             try {
                 const data = JSON.parse(event.data);
-                handleIncoming(data);
+                if (data.system) {
+                    addMessage(data.system, 'system');
+                    if (data.online) {
+                        onlineUsers.textContent = data.online.join(', ') || '(chưa có)';
+                    }
+                } else {
+                    addMessage(`<strong>${data.from || 'Ẩn danh'}</strong>: ${data.message}`);
+                }
             } catch (err) {
-                addMessage(event.data, 'system');
+                // Nếu server trả về text thường thì in trực tiếp ra màn hình chat
+                addMessage(event.data);
             }
         });
 
         socket.addEventListener('close', () => {
-            updateStatus('Ngắt kết nối');
+            updateStatus('Ngắt kết nối với Server.');
             connected = false;
             sendBtn.disabled = true;
+            connectBtn.disabled = false;
+            usernameInput.disabled = false;
         });
 
         socket.addEventListener('error', () => {
-            updateStatus('Lỗi kết nối WebSocket');
+            updateStatus('Lỗi kết nối WebSocket tới Render.');
         });
-
-        connected = true;
-        sendBtn.disabled = false;
-        updateStatus('Đang chờ phản hồi server...');
     };
 
     sendBtn.onclick = () => {
@@ -147,33 +158,12 @@
         const text = messageInput.value.trim();
         if (!text) return;
 
-        if (text.toLowerCase() === 'help' || text.toLowerCase() === 'list') {
-            socket.send(JSON.stringify({ action: text.toLowerCase() }));
-            messageInput.value = '';
-            return;
-        }
-
-        if (text.toLowerCase().startsWith('subscribe ') || text.toLowerCase().startsWith('join ')) {
-            const [cmd, target] = text.split(' ');
-            const actionType = cmd.toLowerCase() === 'subscribe' ? 'channel' : 'group';
-            socket.send(JSON.stringify({ action: 'join', chat: actionType, target: target.replace('#', '') }));
-            messageInput.value = '';
-            return;
-        }
-
-        const [header, ...messageParts] = text.split(' :');
-        if (!messageParts.length) {
-            updateStatus('Sai cú pháp. Dùng "1:1 @username : message" hoặc tương tự');
-            return;
-        }
-
-        const message = messageParts.join(' :').trim();
-        const headerParts = header.trim().split(' ');
-        const type = headerParts[0];
-        const target = headerParts[1];
-
-        socket.send(JSON.stringify({ action: 'send', type, target, message }));
+        // ĐỒNG BỘ: Gửi chuỗi chữ thuần (Plain Text) trực tiếp lên Server 
+        // Server Python của bạn sẽ nhận được nguyên vẹn nội dung này để lưu DB và xử lý cú pháp cắt chuỗi ':'
+        socket.send(text);
+        
         messageInput.value = '';
+        messageInput.focus();
     };
 </script>
 </body>
