@@ -1,3 +1,4 @@
-websockets
-psycopg[binary]
-python-dotenv
+aiohttp>=3.8.0
+websockets>=12.0
+psycopg[binary]>=3.2.0
+python-dotenv>=1.0.0

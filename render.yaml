@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: chatai-cation
+    runtime: python
+    pythonVersion: 3.11
+    startCommand: python server.py
+    envVars:
+      - key: PORT
+        value: 8000
+      - key: DATABASE_URL
+        sync: false
+    autoDeploy: true
+    disk:
+      name: chatai_db
+      mountPath: /var/data
+      sizeGB: 1

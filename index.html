@@ -74,17 +74,18 @@
     let socket;
     let connected = false;
 
-    // AUTO-DETECT SERVER URL - Thay đổi dựa trên môi trường
+    // AUTO-DETECT SERVER URL - Tự động chọn URL phù hợp
     let SERVER_URL;
     if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-        // Local development
-        const port = window.location.port || 8765;
-        SERVER_URL = `ws://${window.location.hostname}:${port}`;
+        // 💻 Local development: ws://localhost:8765
+        SERVER_URL = `ws://${window.location.hostname}:8765`;
     } else {
-        // Production on Render
+        // 🌐 Production (Render): tự động dùng wss:// cho HTTPS
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         SERVER_URL = `${protocol}//${window.location.host}`;
     }
+    
+    console.log(`🔗 WebSocket URL: ${SERVER_URL}`);
 
     function addMessage(text, type='normal') {
         const div = document.createElement('div');
