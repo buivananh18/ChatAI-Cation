@@ -4,15 +4,12 @@ import threading
 import json
 import sys
 
-# Luồng lắng nghe tin nhắn từ Server gửi về
 async def receive_messages(websocket):
     try:
         async for message in websocket:
-            # Kiểm tra nếu là tin nhắn hệ thống (dạng text thuần)
             if message.startswith("HỆ THỐNG"):
                 print(f"\n{message}")
             else:
-                # Nếu là tin nhắn từ người dùng khác (dạng JSON)
                 data = json.loads(message)
                 print(f"\n[{data['from']}]: {data['message']}")
             print("Nhập tin nhắn (hoặc chat theo cú pháp) > ", end="", flush=True)
@@ -20,16 +17,14 @@ async def receive_messages(websocket):
         print("\n[-] Mất kết nối tới Server.")
         sys.exit()
 
-# Luồng gửi tin nhắn lên Server
 async def send_messages(websocket):
-    # Nhập username đầu tiên
     username = input()
     await websocket.send(username)
 
     print("\n--- HƯỚNG DẪN CÚ PHÁP CHAT ---")
-    print("• Chat 1:1 ->  1:1 @ten_nguoi_nhan : Noi dung tin nhan")
-    print("• Chat 1:N ->  1:N #ten_kenh : Noi dung tin nhan (Chỉ dành cho Admin)")
-    print("• Chat N:N ->  N:N #ten_nhom : Noi dung tin nhan")
+    print("• Chat 1:1 ->  1:1 @ten_nguoi_nhan : Noi dung")
+    print("• Chat 1:N ->  1:N #ten_kenh : Noi dung (Chỉ Admin)")
+    print("• Chat N:N ->  N:N #ten_nhom : Noi dung")
     print("--------------------------------\n")
 
     while True:
@@ -40,14 +35,12 @@ async def send_messages(websocket):
             continue
 
         try:
-            # Phân tách cú pháp: [Loại] [Mục tiêu] : [Tin nhắn]
-            # Ví dụ: 1:1 @an : hello
             parts = user_input.split(":", 1)
             prefix = parts[0].strip().split()
             msg_content = parts[1].strip()
 
-            chat_type = prefix[0] # "1:1", "1:N", "N:N"
-            target = prefix[1].replace("@", "").replace("#", "") # Xóa ký tự @ hoặc # đi
+            chat_type = prefix[0]
+            target = prefix[1].replace("@", "").replace("#", "")
 
             payload = {
                 "type": chat_type,
@@ -57,12 +50,16 @@ async def send_messages(websocket):
             await websocket.send(json.dumps(payload))
 
         except Exception:
-            print("❌ Sai cú pháp! Vui lòng nhập lại đúng định dạng ví dụ: '1:1 @phong : chào bạn'")
+            print("❌ Sai cú pháp! Ví dụ: '1:1 @phong : chào bạn'")
 
 async def main():
-    uri = "ws://localhost:8765"
+    # ⚠️ THAY ĐƯỜNG DẪN NÀY THÀNH LINK WEBSERVICE RENDER CỦA BẠN (DÙNG wss://)
+    # Ví dụ: "wss://chatai-cation.onrender.com"
+    uri = "wss://ten-app-cua-ban.onrender.com" 
+    
+    # Nếu muốn test thử ở máy local trước, bạn có thể đổi lại thành: uri = "ws://localhost:8765"
+    
     async with websockets.connect(uri) as websocket:
-        # Chạy song song luồng gửi và luồng nhận
         await asyncio.gather(
             receive_messages(websocket),
             send_messages(websocket)
