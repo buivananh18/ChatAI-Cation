@@ -2,6 +2,11 @@ import asyncio
 import json
 import os
 from pathlib import Path
+import psycopg
+import websockets
+from aiohttp import web
+
+DB_URL = os.environ.get("DATABASE_URL")
 
 clients = {}  # {username: websocket}
 
@@ -258,6 +263,55 @@ def create_app():
     return app
 
 
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 8765))
-    web.run_app(create_app(), host='0.0.0.0', port=port)
+# Hàm kết nối và khởi tạo bảng trên Database PostgreSQL (Con voi)
+def init_database():
+    # Đảm bảo bạn đã lấy biến DB_URL từ file .env ở đầu file server.py nhé:
+    # DB_URL = os.environ.get("DATABASE_URL")
+    
+    if not DB_URL:
+        print("❌ [Database] Không tìm thấy DATABASE_URL. Bỏ qua khởi tạo DB.")
+        return
+
+    try:
+        # Sử dụng thư viện psycopg bản mới mà chúng ta vừa cấu hình
+        
+        # Thêm tham số sslmode='require' trực tiếp vào code để ép kết nối bảo mật
+        conn = psycopg.connect(DB_URL, sslmode='require')
+        cursor = conn.cursor()
+        
+        # Tự động tạo bảng lưu tin nhắn nếu chưa có trên Render
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS chat_messages (
+                id SERIAL PRIMARY KEY,
+                sender VARCHAR(50) NOT NULL,
+                chat_type VARCHAR(10) NOT NULL,
+                target VARCHAR(50) NOT NULL,
+                message TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        print("⚡ [Database] Kết nối thành công tới Render và đảm bảo cấu trúc bảng!")
+    except Exception as e:
+        print(f"❌ [Database] Lỗi kết nối hoặc khởi tạo dữ liệu: {e}")
+
+async def main():
+    init_database()  # Gọi hàm ở trên (Bây giờ Python đã hiểu nó là gì)
+    
+    port = int(os.environ.get("PORT", 8765))
+    app = create_app()
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    print(f"🚀 Server Chat đang chạy an toàn tại cổng {port}...")
+    await asyncio.Future()
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n🛑 Server đã dừng.")
