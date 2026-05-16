@@ -74,8 +74,17 @@
     let socket;
     let connected = false;
 
-    // ĐỊA CHỈ SERVER RENDER ĐÃ ĐƯỢC ĐỊNH NGHĨA CỐ ĐỊNH
-    const SERVER_URL = "wss://chatai-cation.onrender.com";
+    // AUTO-DETECT SERVER URL - Thay đổi dựa trên môi trường
+    let SERVER_URL;
+    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+        // Local development
+        const port = window.location.port || 8765;
+        SERVER_URL = `ws://${window.location.hostname}:${port}`;
+    } else {
+        // Production on Render
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        SERVER_URL = `${protocol}//${window.location.host}`;
+    }
 
     function addMessage(text, type='normal') {
         const div = document.createElement('div');
