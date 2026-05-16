@@ -4,7 +4,6 @@ import os
 from pathlib import Path
 import psycopg
 import websockets
-from aiohttp import web
 
 DB_URL = os.environ.get("DATABASE_URL")
 
@@ -265,21 +264,30 @@ def create_app():
 
 # Hàm kết nối và khởi tạo bảng trên Database PostgreSQL (Con voi)
 def init_database():
-    # Đảm bảo bạn đã lấy biến DB_URL từ file .env ở đầu file server.py nhé:
-    # DB_URL = os.environ.get("DATABASE_URL")
+    DB_URL = os.environ.get("DATABASE_URL")
     
     if not DB_URL:
         print("❌ [Database] Không tìm thấy DATABASE_URL. Bỏ qua khởi tạo DB.")
         return
 
     try:
-        # Sử dụng thư viện psycopg bản mới mà chúng ta vừa cấu hình
+        import psycopg
         
-        # Thêm tham số sslmode='require' trực tiếp vào code để ép kết nối bảo mật
-        conn = psycopg.connect(DB_URL, sslmode='require')
+        # Đảm bảo chuỗi kết nối có tham số sslmode=require ở cuối
+        # Nếu chưa có, chúng ta tự động nối thêm vào code cho chắc chắn
+        if "sslmode" not in DB_URL:
+            if "?" in DB_URL:
+                conn_str = f"{DB_URL}&sslmode=require"
+            else:
+                conn_str = f"{DB_URL}?sslmode=require"
+        else:
+            conn_str = DB_URL
+
+        # Kết nối bằng chuỗi hoàn chỉnh
+        conn = psycopg.connect(conn_str)
         cursor = conn.cursor()
         
-        # Tự động tạo bảng lưu tin nhắn nếu chưa có trên Render
+        # (Giữ nguyên đoạn code cursor.execute tạo bảng phía dưới của bạn...)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS chat_messages (
                 id SERIAL PRIMARY KEY,
@@ -290,7 +298,6 @@ def init_database():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
-        
         conn.commit()
         cursor.close()
         conn.close()
